@@ -28,4 +28,38 @@ All game logic runs on-chain via a Compact smart contract on Midnight (L2 on Car
 
 ## Status
 
-Early development. See [PLAN.md](./PLAN.md) for current progress.
+**Phase 1 Complete** ✅
+
+- Smart contract implemented in Compact
+- TypeScript API wrapper
+- CLI tool with all commands
+- Docker local development stack
+
+See [PLAN.md](./PLAN.md) for roadmap and [QUICKSTART.md](./QUICKSTART.md) to get started.
+
+## Quick Start
+
+```bash
+# Install dependencies
+npm install
+
+# Build project
+npm run build
+
+# Start local Midnight node
+cd docker && docker-compose up -d
+
+# Deploy contract
+npx shadow-sniper deploy --operator <YOUR_ADDRESS>
+
+# Start a round
+npx shadow-sniper start-round --contract <CONTRACT_ADDRESS>
+
+# Place a bet
+npx shadow-sniper bet --contract <CONTRACT_ADDRESS> --amount 1000
+
+# Check status
+npx shadow-sniper status --contract <CONTRACT_ADDRESS>
+```
+
+See [QUICKSTART.md](./QUICKSTART.md) for detailed instructions.

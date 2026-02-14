@@ -1,0 +1,29 @@
+{
+  "name": "shadow-sniper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PvP betting game on Midnight Network",
+  "workspaces": [
+    "contract",
+    "api",
+    "cli",
+    "operator"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "compile:contract": "npm run build --workspace=contract"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "packageManager": "npm@10.0.0"
+}

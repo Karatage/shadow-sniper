@@ -1,0 +1,34 @@
+# Midnight Proof Server Configuration
+
+server:
+  host: 0.0.0.0
+  port: 6386
+
+proof_generation:
+  # Number of worker threads for parallel proof generation
+  workers: 4
+
+  # Maximum concurrent proof requests
+  max_concurrent: 10
+
+  # Proof generation timeout in seconds
+  timeout: 300
+
+  # Enable proof caching
+  cache_enabled: true
+  cache_size: 1000
+  cache_ttl: 3600
+
+circuits:
+  # ShadowSniper contract circuits
+  - name: shadow_sniper
+    path: /circuits/shadow_sniper
+    enabled: true
+
+logging:
+  level: info
+  format: json
+
+metrics:
+  enabled: true
+  port: 9090

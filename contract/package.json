@@ -1,0 +1,17 @@
+{
+  "name": "@shadow-sniper/contract",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "mkdir -p managed && echo 'Compact compiler not installed. Contract: src/shadow_sniper.compact ready for compilation.' > managed/README.txt",
+    "build:real": "compact compile src/shadow_sniper.compact",
+    "test": "node --test src/test/*.test.ts",
+    "clean": "rm -rf managed dist .compact-cache"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.17.9",
+    "typescript": "^5.7.2"
+  }
+}

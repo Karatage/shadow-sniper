@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # Midnight standalone node (local devnet)
+  midnight-node:
+    image: midnightnetwork/standalone-node:latest
+    container_name: shadow-sniper-node
+    ports:
+      - "6382:6382"  # P2P
+      - "6383:6383"  # RPC
+      - "6384:6384"  # WebSocket
+    environment:
+      - LOG_LEVEL=info
+      - NETWORK=standalone
+    volumes:
+      - midnight-data:/data
+    networks:
+      - midnight-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6383/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Midnight indexer
+  midnight-indexer:
+    image: midnightnetwork/indexer:latest
+    container_name: shadow-sniper-indexer
+    ports:
+      - "6385:6385"  # Indexer API
+    environment:
+      - NODE_URL=http://midnight-node:6383
+      - DATABASE_URL=postgresql://midnight:midnight@postgres:5432/midnight_indexer
+      - LOG_LEVEL=info
+    depends_on:
+      midnight-node:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - midnight-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6385/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Proof server (for ZK proof generation)
+  proof-server:
+    image: midnightnetwork/proof-server:latest
+    container_name: shadow-sniper-proof-server
+    ports:
+      - "6386:6386"  # Proof server API
+    environment:
+      - LOG_LEVEL=info
+      - WORKER_THREADS=4
+      - CACHE_SIZE=1000
+    volumes:
+      - proof-cache:/cache
+      - ./proof-server.yml:/config/proof-server.yml:ro
+    networks:
+      - midnight-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6386/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL for indexer
+  postgres:
+    image: postgres:15-alpine
+    container_name: shadow-sniper-postgres
+    environment:
+      - POSTGRES_DB=midnight_indexer
+      - POSTGRES_USER=midnight
+      - POSTGRES_PASSWORD=midnight
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - midnight-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U midnight"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  midnight-data:
+  postgres-data:
+  proof-cache:
+
+networks:
+  midnight-network:
+    driver: bridge
