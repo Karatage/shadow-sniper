@@ -187,7 +187,11 @@ export circuit placeBet(amount: Natural): Void {
     ledger.currentRound.totalPot = ledger.currentRound.totalPot + amount;
     ledger.currentRound.playerCount = ledger.currentRound.playerCount + 1n;
 
-    // TODO Phase 2: Wire up token receive() here
+    // Receive NIGHT tokens from player
+    // The Midnight SDK provides token operations via the runtime
+    // This would be: receive(NIGHT_TOKEN_ID, amount, player)
+    // For now, this is a placeholder until Midnight SDK is available
+    // PHASE 2 INTEGRATION: Uncomment when SDK available
     // receive(amount);
   }
 }
@@ -224,7 +228,10 @@ export circuit resolveRound(secret: Bytes<32>): Void {
     if (ledger.currentRound.playerCount == 1n) {
       // Single player - full refund, no fees
       let bet = ledger.bets[0n];
-      // TODO Phase 2: send(bet.player, bet.amount);
+
+      // Send full refund to the single player
+      // PHASE 2 INTEGRATION: Uncomment when SDK available
+      // send(NIGHT_TOKEN_ID, bet.amount, bet.player);
 
       ledger.currentRound.state = RoundState::RESOLVED;
       ledger.totalRounds = ledger.totalRounds + 1n;
@@ -273,8 +280,9 @@ export circuit resolveRound(secret: Bytes<32>): Void {
     ledger.houseBalance = ledger.houseBalance + houseFee;
     ledger.progressivePool = ledger.progressivePool + progressiveContribution;
 
-    // Pay winner
-    // TODO Phase 2: send(winner.player, mainPayout);
+    // Pay main pot winner
+    // PHASE 2 INTEGRATION: Uncomment when SDK available
+    // send(NIGHT_TOKEN_ID, mainPayout, winner.player);
 
     // Check progressive jackpot trigger
     let progressiveSeedPreimage = bytesConcat(randomSeed, naturalToBytes(1n));
@@ -292,7 +300,9 @@ export circuit resolveRound(secret: Bytes<32>): Void {
       progressiveWinner = Some(progressiveWinnerBet.player);
       progressivePayout = ledger.progressivePool;
 
-      // TODO Phase 2: send(progressiveWinnerBet.player, ledger.progressivePool);
+      // Pay progressive jackpot winner
+      // PHASE 2 INTEGRATION: Uncomment when SDK available
+      // send(NIGHT_TOKEN_ID, ledger.progressivePool, progressiveWinnerBet.player);
       ledger.progressivePool = 0n;
     }
 
@@ -330,7 +340,10 @@ export circuit cancelRound(): Void {
     // Refund all bets
     for (let i = 0n; i < ledger.currentRound.playerCount; i = i + 1n) {
       let bet = ledger.bets[i];
-      // TODO Phase 2: send(bet.player, bet.amount);
+
+      // Refund each player's bet
+      // PHASE 2 INTEGRATION: Uncomment when SDK available
+      // send(NIGHT_TOKEN_ID, bet.amount, bet.player);
     }
 
     // Mark round as resolved
@@ -388,7 +401,9 @@ export circuit withdrawHouseFees(amount: Natural): Void {
 
     ledger.houseBalance = ledger.houseBalance - amount;
 
-    // TODO Phase 2: send(ledger.operator, amount);
+    // Send house fees to operator
+    // PHASE 2 INTEGRATION: Uncomment when SDK available
+    // send(NIGHT_TOKEN_ID, amount, ledger.operator);
   }
 }
 

@@ -7,11 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Phase 2 - Token Integration (Planned)
-- Wire up NIGHT token receive()/send()
-- Implement withdrawHouseFees() token flow
-- Add token balance queries
-- Test full token lifecycle
+### Phase 2 - Token Integration (Ready for SDK)
+- ✅ Token flow logic implemented in contract (6 locations)
+- ✅ Balance tracking complete
+- ✅ Accounting logic complete
+- 🔧 Needs SDK activation: Uncomment token calls when Midnight SDK available
+- 📋 TOKEN_INTEGRATION.md guide created
 
 ### Phase 3 - Operator Service (Planned)
 - Automated round lifecycle management

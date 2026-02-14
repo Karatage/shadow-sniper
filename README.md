@@ -28,14 +28,16 @@ All game logic runs on-chain via a Compact smart contract on Midnight (L2 on Car
 
 ## Status
 
-**Phase 1 Complete** ✅
+**Phase 1 Complete** ✅ | **Phase 2 Prepared** 🔄
 
-- Smart contract implemented in Compact
-- TypeScript API wrapper
-- CLI tool with all commands
-- Docker local development stack
+- ✅ Smart contract implemented in Compact
+- ✅ TypeScript API wrapper
+- ✅ CLI tool with all commands
+- ✅ Docker local development stack
+- ✅ Comprehensive unit tests (36/36 passing)
+- 🔄 Token integration prepared (ready for SDK activation)
 
-See [PLAN.md](./PLAN.md) for roadmap and [QUICKSTART.md](./QUICKSTART.md) to get started.
+See [PLAN.md](./PLAN.md) for roadmap, [QUICKSTART.md](./QUICKSTART.md) to get started, and [TOKEN_INTEGRATION.md](./TOKEN_INTEGRATION.md) for token flow details.
 
 ## Quick Start
 

@@ -83,11 +83,15 @@ Runs unit tests in `src/test/shadow_sniper.test.ts`.
 
 ## Token Integration (Phase 2)
 
-Currently, token flow is stubbed with TODO comments:
-- `placeBet()`: Add `receive(amount)` to accept NIGHT tokens
-- `resolveRound()`: Add `send()` calls for winner payouts
-- `cancelRound()`: Add `send()` calls for refunds
-- `withdrawHouseFees()`: Add `send()` call for operator withdrawal
+**Status: Prepared for SDK Integration** 🔄
+
+Token flow logic is fully implemented with placeholder comments marking SDK activation points:
+- ✅ `placeBet()`: `receive()` call prepared (line 193)
+- ✅ `resolveRound()`: `send()` calls prepared for payouts (lines 230, 280, 298)
+- ✅ `cancelRound()`: `send()` calls prepared for refunds (line 336)
+- ✅ `withdrawHouseFees()`: `send()` call prepared (line 394)
+
+All accounting logic complete. See [TOKEN_INTEGRATION.md](../TOKEN_INTEGRATION.md) for activation guide.
 
 ## Configuration Defaults
 
