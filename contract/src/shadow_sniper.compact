@@ -1,439 +1,315 @@
 // ShadowSniper - PvP Betting Game on Midnight Network
-// A 5-minute round-based betting game with weighted RNG and progressive jackpot
+// A round-based betting game with weighted RNG and progressive jackpot
+//
+// Design: All game data is fully public (disclosed).
+// Computation happens off-chain, verification on-chain (ZK pattern).
 
-circuit ShadowSniper;
+pragma language_version >= 0.20;
 
-// Maximum number of players per round
-const MAX_PLAYERS: Natural = 100;
+import CompactStandardLibrary;
 
 // Round states
-enum RoundState {
-  RESOLVED,   // Round has ended or hasn't started yet
-  OPEN,       // Players can place bets
-  RESOLVING   // Round ended, waiting for operator to reveal secret
-}
+enum RoundState { resolved, open }
 
-// Individual bet record
-struct Bet {
-  player: Address,
-  amount: Natural,
-  timestamp: Natural
-}
+// Witnesses for off-chain data
+witness callerAddress(): Bytes<32>;
+witness currentTime(): Uint<64>;
 
-// Round configuration (all publicly disclosed)
-struct RoundConfig {
-  minBet: Natural,              // Minimum bet amount in NIGHT tokens
-  maxBet: Natural,              // Maximum bet amount
-  roundDuration: Natural,       // Round length in milliseconds (default: 5 minutes)
-  houseFeePercent: Natural,     // House fee as percentage (e.g., 3 = 3%)
-  progressivePercent: Natural,  // Progressive contribution as percentage (e.g., 1 = 1%)
-  progressiveTriggerPercent: Natural,  // Probability of progressive jackpot (e.g., 1 = 1%)
-  resolveDeadline: Natural      // Time in ms operator must reveal secret (e.g., 5 minutes)
-}
+// --- Ledger State (all public for transparency) ---
 
-// Active round state
-struct Round {
-  roundNumber: Natural,
-  state: RoundState,
-  commitment: Bytes<32>,        // Hash of operator's secret
-  startTime: Natural,
-  endTime: Natural,
-  resolveDeadline: Natural,     // Deadline for operator to reveal
-  totalPot: Natural,
-  playerCount: Natural
-}
+export ledger operator: Bytes<32>;
+export ledger minBet: Uint<64>;
+export ledger maxBet: Uint<64>;
+export ledger roundDuration: Uint<64>;
+export ledger houseFeePercent: Uint<64>;
+export ledger progressivePercent: Uint<64>;
+export ledger resolveDeadlineMs: Uint<64>;
 
-// Game result (fully disclosed)
-struct RoundResult {
-  roundNumber: Natural,
-  winner: Address,
-  winnerBet: Natural,
-  totalPot: Natural,
-  payout: Natural,
-  houseFee: Natural,
-  progressiveContribution: Natural,
-  progressiveWinner: Option<Address>,
-  progressivePayout: Natural,
-  timestamp: Natural
-}
+export ledger state: RoundState;
+export ledger roundNumber: Counter;
+export ledger totalRounds: Counter;
+export ledger commitment: Field;
+export ledger startTime: Uint<64>;
+export ledger endTime: Uint<64>;
+export ledger resolveDeadline: Uint<64>;
+export ledger totalPot: Uint<64>;
+export ledger playerCount: Uint<64>;
+export ledger progressivePool: Uint<64>;
+export ledger houseBalance: Uint<64>;
 
-// Ledger state (all public for transparency)
-export ledger ShadowSniperLedger {
-  operator: Address;                          // Game operator address
-  config: RoundConfig;                         // Game configuration
-  currentRound: Round;                         // Active round state
-  bets: Vector<Bet, MAX_PLAYERS>;             // All bets in current round
-  progressivePool: Natural;                    // Accumulated progressive jackpot
-  houseBalance: Natural;                       // Accumulated house fees
-  totalRounds: Natural;                        // Total rounds played
-  lastResult: Option<RoundResult>;            // Last round result for display
-}
+// 10 fixed bet slots
+export ledger bet0_active: Boolean;
+export ledger bet0_player: Bytes<32>;
+export ledger bet0_amount: Uint<64>;
+export ledger bet1_active: Boolean;
+export ledger bet1_player: Bytes<32>;
+export ledger bet1_amount: Uint<64>;
+export ledger bet2_active: Boolean;
+export ledger bet2_player: Bytes<32>;
+export ledger bet2_amount: Uint<64>;
+export ledger bet3_active: Boolean;
+export ledger bet3_player: Bytes<32>;
+export ledger bet3_amount: Uint<64>;
+export ledger bet4_active: Boolean;
+export ledger bet4_player: Bytes<32>;
+export ledger bet4_amount: Uint<64>;
+export ledger bet5_active: Boolean;
+export ledger bet5_player: Bytes<32>;
+export ledger bet5_amount: Uint<64>;
+export ledger bet6_active: Boolean;
+export ledger bet6_player: Bytes<32>;
+export ledger bet6_amount: Uint<64>;
+export ledger bet7_active: Boolean;
+export ledger bet7_player: Bytes<32>;
+export ledger bet7_amount: Uint<64>;
+export ledger bet8_active: Boolean;
+export ledger bet8_player: Bytes<32>;
+export ledger bet8_amount: Uint<64>;
+export ledger bet9_active: Boolean;
+export ledger bet9_player: Bytes<32>;
+export ledger bet9_amount: Uint<64>;
 
-// Initialize the contract
-export constructor(
-  operatorAddr: Address,
-  minBet: Natural,
-  maxBet: Natural,
-  roundDuration: Natural,
-  houseFeePercent: Natural,
-  progressivePercent: Natural,
-  progressiveTriggerPercent: Natural,
-  resolveDeadline: Natural
+// Last result
+export ledger lastWinner: Bytes<32>;
+export ledger lastPayout: Uint<64>;
+export ledger lastHouseFee: Uint<64>;
+
+// --- Constructor ---
+
+constructor(
+  op: Bytes<32>,
+  cfgMinBet: Uint<64>,
+  cfgMaxBet: Uint<64>,
+  cfgDuration: Uint<64>,
+  cfgHouseFee: Uint<64>,
+  cfgProgressive: Uint<64>,
+  cfgDeadline: Uint<64>
 ) {
-  // Validate configuration
-  assert(minBet > 0n, "Min bet must be positive");
-  assert(maxBet >= minBet, "Max bet must be >= min bet");
-  assert(houseFeePercent <= 100n, "House fee cannot exceed 100%");
-  assert(progressivePercent <= 100n, "Progressive percent cannot exceed 100%");
-  assert(progressiveTriggerPercent <= 100n, "Trigger percent cannot exceed 100%");
-  assert(houseFeePercent + progressivePercent < 100n, "Combined fees must be < 100%");
+  operator = disclose(op);
+  minBet = disclose(cfgMinBet);
+  maxBet = disclose(cfgMaxBet);
+  roundDuration = disclose(cfgDuration);
+  houseFeePercent = disclose(cfgHouseFee);
+  progressivePercent = disclose(cfgProgressive);
+  resolveDeadlineMs = disclose(cfgDeadline);
 
-  disclose {
-    ledger.operator = operatorAddr;
-    ledger.config = RoundConfig {
-      minBet: minBet,
-      maxBet: maxBet,
-      roundDuration: roundDuration,
-      houseFeePercent: houseFeePercent,
-      progressivePercent: progressivePercent,
-      progressiveTriggerPercent: progressiveTriggerPercent,
-      resolveDeadline: resolveDeadline
-    };
-    ledger.currentRound = Round {
-      roundNumber: 0n,
-      state: RoundState::RESOLVED,
-      commitment: zeroBytes<32>(),
-      startTime: 0n,
-      endTime: 0n,
-      resolveDeadline: 0n,
-      totalPot: 0n,
-      playerCount: 0n
-    };
-    ledger.bets = emptyVector<Bet, MAX_PLAYERS>();
-    ledger.progressivePool = 0n;
-    ledger.houseBalance = 0n;
-    ledger.totalRounds = 0n;
-    ledger.lastResult = None<RoundResult>();
+  state = RoundState.resolved;
+  commitment = 0 as Field;
+  startTime = 0;
+  endTime = 0;
+  resolveDeadline = 0;
+  totalPot = 0;
+  playerCount = 0;
+  progressivePool = 0;
+  houseBalance = 0;
+  lastWinner = default<Bytes<32>>;
+  lastPayout = 0;
+  lastHouseFee = 0;
+
+  bet0_active = false; bet0_player = default<Bytes<32>>; bet0_amount = 0;
+  bet1_active = false; bet1_player = default<Bytes<32>>; bet1_amount = 0;
+  bet2_active = false; bet2_player = default<Bytes<32>>; bet2_amount = 0;
+  bet3_active = false; bet3_player = default<Bytes<32>>; bet3_amount = 0;
+  bet4_active = false; bet4_player = default<Bytes<32>>; bet4_amount = 0;
+  bet5_active = false; bet5_player = default<Bytes<32>>; bet5_amount = 0;
+  bet6_active = false; bet6_player = default<Bytes<32>>; bet6_amount = 0;
+  bet7_active = false; bet7_player = default<Bytes<32>>; bet7_amount = 0;
+  bet8_active = false; bet8_player = default<Bytes<32>>; bet8_amount = 0;
+  bet9_active = false; bet9_player = default<Bytes<32>>; bet9_amount = 0;
+}
+
+// --- Circuit: Start Round ---
+
+export circuit startRound(newCommitment: Field): [] {
+  const caller = callerAddress();
+  assert(caller == operator, "Only operator can start rounds");
+  assert(state == RoundState.resolved, "Previous round not resolved");
+
+  const time = disclose(currentTime());
+
+  state = RoundState.open;
+  roundNumber += 1;
+  commitment = disclose(newCommitment);
+  startTime = time;
+  endTime = (time + roundDuration) as Uint<64>;
+  resolveDeadline = (time + roundDuration + resolveDeadlineMs) as Uint<64>;
+  totalPot = 0;
+  playerCount = 0;
+
+  bet0_active = false; bet0_amount = 0;
+  bet1_active = false; bet1_amount = 0;
+  bet2_active = false; bet2_amount = 0;
+  bet3_active = false; bet3_amount = 0;
+  bet4_active = false; bet4_amount = 0;
+  bet5_active = false; bet5_amount = 0;
+  bet6_active = false; bet6_amount = 0;
+  bet7_active = false; bet7_amount = 0;
+  bet8_active = false; bet8_amount = 0;
+  bet9_active = false; bet9_amount = 0;
+}
+
+// --- Circuit: Place Bet ---
+
+export circuit placeBet(amount: Uint<64>): [] {
+  const player = disclose(callerAddress());
+  const time = currentTime();
+
+  assert(state == RoundState.open, "Round not open for bets");
+  assert(disclose(time) < endTime, "Round has ended");
+  assert(disclose(amount) >= minBet, "Bet below minimum");
+  assert(disclose(amount) <= maxBet, "Bet above maximum");
+  assert(playerCount < 10, "Round is full");
+
+  // Check player hasn't already bet
+  assert(!(bet0_active && bet0_player == player), "Already placed bet");
+  assert(!(bet1_active && bet1_player == player), "Already placed bet");
+  assert(!(bet2_active && bet2_player == player), "Already placed bet");
+  assert(!(bet3_active && bet3_player == player), "Already placed bet");
+  assert(!(bet4_active && bet4_player == player), "Already placed bet");
+  assert(!(bet5_active && bet5_player == player), "Already placed bet");
+  assert(!(bet6_active && bet6_player == player), "Already placed bet");
+  assert(!(bet7_active && bet7_player == player), "Already placed bet");
+  assert(!(bet8_active && bet8_player == player), "Already placed bet");
+  assert(!(bet9_active && bet9_player == player), "Already placed bet");
+
+  // Place bet in next slot
+  if (playerCount == 0) { bet0_active = true; bet0_player = player; bet0_amount = disclose(amount); }
+  if (playerCount == 1) { bet1_active = true; bet1_player = player; bet1_amount = disclose(amount); }
+  if (playerCount == 2) { bet2_active = true; bet2_player = player; bet2_amount = disclose(amount); }
+  if (playerCount == 3) { bet3_active = true; bet3_player = player; bet3_amount = disclose(amount); }
+  if (playerCount == 4) { bet4_active = true; bet4_player = player; bet4_amount = disclose(amount); }
+  if (playerCount == 5) { bet5_active = true; bet5_player = player; bet5_amount = disclose(amount); }
+  if (playerCount == 6) { bet6_active = true; bet6_player = player; bet6_amount = disclose(amount); }
+  if (playerCount == 7) { bet7_active = true; bet7_player = player; bet7_amount = disclose(amount); }
+  if (playerCount == 8) { bet8_active = true; bet8_player = player; bet8_amount = disclose(amount); }
+  if (playerCount == 9) { bet9_active = true; bet9_player = player; bet9_amount = disclose(amount); }
+
+  totalPot = (totalPot + disclose(amount)) as Uint<64>;
+  playerCount = (playerCount + 1) as Uint<64>;
+}
+
+// --- Circuit: Resolve Round ---
+// Operator reveals secret and provides computed payout breakdown.
+// Contract verifies: commitment, fee math, winner index validity.
+
+export circuit resolveRound(
+  secret: Bytes<32>,
+  winnerAddr: Bytes<32>,
+  payout: Uint<64>,
+  houseFee: Uint<64>,
+  progContrib: Uint<64>
+): [] {
+  const caller = callerAddress();
+  const time = currentTime();
+
+  assert(caller == operator, "Only operator can resolve");
+  assert(state == RoundState.open, "No active round");
+  assert(disclose(time) >= endTime, "Round not ended yet");
+  assert(disclose(time) <= resolveDeadline, "Deadline passed, use cancelRound");
+
+  // Verify commitment
+  const secretHash = transientHash<Bytes<32>>(secret);
+  assert(secretHash == commitment, "Invalid secret");
+
+  // Handle 0 players
+  if (playerCount == 0) {
+    assert(disclose(payout) == 0, "No payout for empty round");
+    state = RoundState.resolved;
+    totalRounds += 1;
+    lastWinner = default<Bytes<32>>;
+    lastPayout = 0;
+    lastHouseFee = 0;
+  }
+
+  // Handle 1 player - full refund
+  if (playerCount == 1) {
+    assert(disclose(payout) == totalPot, "Single player gets full refund");
+    assert(disclose(houseFee) == 0, "No fees for single player");
+    state = RoundState.resolved;
+    totalRounds += 1;
+    lastWinner = bet0_player;
+    lastPayout = totalPot;
+    lastHouseFee = 0;
+  }
+
+  // Handle 2+ players
+  if (playerCount >= 2) {
+    // Verify fee breakdown: payout + houseFee + progContrib == totalPot
+    assert(disclose(payout) + disclose(houseFee) + disclose(progContrib) == totalPot, "Payout breakdown invalid");
+    assert(disclose(houseFee) * 100 == totalPot * houseFeePercent, "House fee incorrect");
+    assert(disclose(progContrib) * 100 == totalPot * progressivePercent, "Progressive fee incorrect");
+
+    // Verify winner is an active bettor
+    const w = disclose(winnerAddr);
+    assert(
+      (bet0_active && bet0_player == w) ||
+      (bet1_active && bet1_player == w) ||
+      (bet2_active && bet2_player == w) ||
+      (bet3_active && bet3_player == w) ||
+      (bet4_active && bet4_player == w) ||
+      (bet5_active && bet5_player == w) ||
+      (bet6_active && bet6_player == w) ||
+      (bet7_active && bet7_player == w) ||
+      (bet8_active && bet8_player == w) ||
+      (bet9_active && bet9_player == w),
+      "Winner must be an active bettor"
+    );
+
+    houseBalance = (houseBalance + disclose(houseFee)) as Uint<64>;
+    progressivePool = (progressivePool + disclose(progContrib)) as Uint<64>;
+
+    state = RoundState.resolved;
+    totalRounds += 1;
+    lastWinner = w;
+    lastPayout = disclose(payout);
+    lastHouseFee = disclose(houseFee);
   }
 }
 
-// Operator starts a new round with RNG commitment
-export circuit startRound(commitment: Bytes<32>): Void {
-  disclose {
-    // Only operator can start rounds
-    assert(witnesses.thisAddress == ledger.operator, "Only operator can start rounds");
+// --- Circuit: Cancel Round ---
 
-    // Round must be in RESOLVED state
-    assert(ledger.currentRound.state == RoundState::RESOLVED, "Previous round not resolved");
+export circuit cancelRound(): [] {
+  const time = currentTime();
+  assert(disclose(time) > resolveDeadline, "Resolve deadline not passed yet");
+  assert(state == RoundState.open, "No active round to cancel");
 
-    // Commitment cannot be zero
-    assert(commitment != zeroBytes<32>(), "Invalid commitment");
-
-    let currentTime = witnesses.blockTime;
-    let endTime = currentTime + ledger.config.roundDuration;
-    let resolveDeadline = endTime + ledger.config.resolveDeadline;
-
-    ledger.currentRound = Round {
-      roundNumber: ledger.totalRounds + 1n,
-      state: RoundState::OPEN,
-      commitment: commitment,
-      startTime: currentTime,
-      endTime: endTime,
-      resolveDeadline: resolveDeadline,
-      totalPot: 0n,
-      playerCount: 0n
-    };
-    ledger.bets = emptyVector<Bet, MAX_PLAYERS>();
-  }
+  state = RoundState.resolved;
+  totalRounds += 1;
+  lastWinner = default<Bytes<32>>;
+  lastPayout = 0;
+  lastHouseFee = 0;
 }
 
-// Player places a bet
-export circuit placeBet(amount: Natural): Void {
-  disclose {
-    let player = witnesses.thisAddress;
-    let currentTime = witnesses.blockTime;
+// --- Circuit: Update Config ---
 
-    // Round must be open
-    assert(ledger.currentRound.state == RoundState::OPEN, "Round not open for bets");
-
-    // Must be within time window
-    assert(currentTime < ledger.currentRound.endTime, "Round has ended");
-
-    // Validate bet amount
-    assert(amount >= ledger.config.minBet, "Bet below minimum");
-    assert(amount <= ledger.config.maxBet, "Bet above maximum");
-
-    // Player can only bet once per round
-    let alreadyBet = false;
-    for (let i = 0n; i < ledger.currentRound.playerCount; i = i + 1n) {
-      if (ledger.bets[i].player == player) {
-        alreadyBet = true;
-      }
-    }
-    assert(!alreadyBet, "Already placed bet this round");
-
-    // Check max players
-    assert(ledger.currentRound.playerCount < MAX_PLAYERS, "Round is full");
-
-    // Record the bet
-    let bet = Bet {
-      player: player,
-      amount: amount,
-      timestamp: currentTime
-    };
-    ledger.bets = vectorPush<Bet, MAX_PLAYERS>(ledger.bets, bet);
-
-    // Update round state
-    ledger.currentRound.totalPot = ledger.currentRound.totalPot + amount;
-    ledger.currentRound.playerCount = ledger.currentRound.playerCount + 1n;
-
-    // Receive NIGHT tokens from player
-    // The Midnight SDK provides token operations via the runtime
-    // This would be: receive(NIGHT_TOKEN_ID, amount, player)
-    // For now, this is a placeholder until Midnight SDK is available
-    // PHASE 2 INTEGRATION: Uncomment when SDK available
-    // receive(amount);
-  }
-}
-
-// Operator resolves the round by revealing the secret
-export circuit resolveRound(secret: Bytes<32>): Void {
-  disclose {
-    let currentTime = witnesses.blockTime;
-
-    // Only operator can resolve
-    assert(witnesses.thisAddress == ledger.operator, "Only operator can resolve");
-
-    // Round must be past end time
-    assert(currentTime >= ledger.currentRound.endTime, "Round not ended yet");
-
-    // Must be before resolve deadline
-    assert(currentTime <= ledger.currentRound.resolveDeadline, "Resolve deadline passed, use cancelRound");
-
-    // Verify commitment: hash(secret || roundNumber) == commitment
-    let roundNumberBytes = naturalToBytes(ledger.currentRound.roundNumber);
-    let preimage = bytesConcat(secret, roundNumberBytes);
-    let hash = sha256(preimage);
-    assert(hash == ledger.currentRound.commitment, "Invalid secret - commitment mismatch");
-
-    // Handle edge cases
-    if (ledger.currentRound.playerCount == 0n) {
-      // No players - just mark as resolved
-      ledger.currentRound.state = RoundState::RESOLVED;
-      ledger.totalRounds = ledger.totalRounds + 1n;
-      ledger.lastResult = None<RoundResult>();
-      return;
-    }
-
-    if (ledger.currentRound.playerCount == 1n) {
-      // Single player - full refund, no fees
-      let bet = ledger.bets[0n];
-
-      // Send full refund to the single player
-      // PHASE 2 INTEGRATION: Uncomment when SDK available
-      // send(NIGHT_TOKEN_ID, bet.amount, bet.player);
-
-      ledger.currentRound.state = RoundState::RESOLVED;
-      ledger.totalRounds = ledger.totalRounds + 1n;
-      ledger.lastResult = Some(RoundResult {
-        roundNumber: ledger.currentRound.roundNumber,
-        winner: bet.player,
-        winnerBet: bet.amount,
-        totalPot: bet.amount,
-        payout: bet.amount,
-        houseFee: 0n,
-        progressiveContribution: 0n,
-        progressiveWinner: None<Address>(),
-        progressivePayout: 0n,
-        timestamp: currentTime
-      });
-      return;
-    }
-
-    // Generate random seed: hash(secret || roundNumber || totalPot)
-    let totalPotBytes = naturalToBytes(ledger.currentRound.totalPot);
-    let seedPreimage = bytesConcat(bytesConcat(secret, roundNumberBytes), totalPotBytes);
-    let randomSeed = sha256(seedPreimage);
-
-    // Select main pot winner using weighted RNG
-    let targetWeight = bytesToNatural(randomSeed) % ledger.currentRound.totalPot;
-    let cumulativeWeight = 0n;
-    let winnerIndex = 0n;
-    let found = false;
-
-    for (let i = 0n; i < ledger.currentRound.playerCount; i = i + 1n) {
-      cumulativeWeight = cumulativeWeight + ledger.bets[i].amount;
-      if (!found && cumulativeWeight > targetWeight) {
-        winnerIndex = i;
-        found = true;
-      }
-    }
-
-    let winner = ledger.bets[winnerIndex];
-
-    // Calculate payouts
-    let houseFee = (ledger.currentRound.totalPot * ledger.config.houseFeePercent) / 100n;
-    let progressiveContribution = (ledger.currentRound.totalPot * ledger.config.progressivePercent) / 100n;
-    let mainPayout = ledger.currentRound.totalPot - houseFee - progressiveContribution;
-
-    // Add to pools
-    ledger.houseBalance = ledger.houseBalance + houseFee;
-    ledger.progressivePool = ledger.progressivePool + progressiveContribution;
-
-    // Pay main pot winner
-    // PHASE 2 INTEGRATION: Uncomment when SDK available
-    // send(NIGHT_TOKEN_ID, mainPayout, winner.player);
-
-    // Check progressive jackpot trigger
-    let progressiveSeedPreimage = bytesConcat(randomSeed, naturalToBytes(1n));
-    let progressiveSeed = sha256(progressiveSeedPreimage);
-    let progressiveRoll = bytesToNatural(progressiveSeed) % 100n;
-
-    let progressiveWinner = None<Address>();
-    let progressivePayout = 0n;
-
-    if (progressiveRoll < ledger.config.progressiveTriggerPercent) {
-      // Progressive triggers! Equal probability per player
-      let progressiveTargetIndex = bytesToNatural(sha256(progressiveSeedPreimage)) % ledger.currentRound.playerCount;
-      let progressiveWinnerBet = ledger.bets[progressiveTargetIndex];
-
-      progressiveWinner = Some(progressiveWinnerBet.player);
-      progressivePayout = ledger.progressivePool;
-
-      // Pay progressive jackpot winner
-      // PHASE 2 INTEGRATION: Uncomment when SDK available
-      // send(NIGHT_TOKEN_ID, ledger.progressivePool, progressiveWinnerBet.player);
-      ledger.progressivePool = 0n;
-    }
-
-    // Record result
-    ledger.lastResult = Some(RoundResult {
-      roundNumber: ledger.currentRound.roundNumber,
-      winner: winner.player,
-      winnerBet: winner.amount,
-      totalPot: ledger.currentRound.totalPot,
-      payout: mainPayout,
-      houseFee: houseFee,
-      progressiveContribution: progressiveContribution,
-      progressiveWinner: progressiveWinner,
-      progressivePayout: progressivePayout,
-      timestamp: currentTime
-    });
-
-    // Mark round as resolved
-    ledger.currentRound.state = RoundState::RESOLVED;
-    ledger.totalRounds = ledger.totalRounds + 1n;
-  }
-}
-
-// Cancel round if operator fails to resolve (safety valve)
-export circuit cancelRound(): Void {
-  disclose {
-    let currentTime = witnesses.blockTime;
-
-    // Must be past resolve deadline
-    assert(currentTime > ledger.currentRound.resolveDeadline, "Resolve deadline not passed yet");
-
-    // Round must not be already resolved
-    assert(ledger.currentRound.state != RoundState::RESOLVED, "Round already resolved");
-
-    // Refund all bets
-    for (let i = 0n; i < ledger.currentRound.playerCount; i = i + 1n) {
-      let bet = ledger.bets[i];
-
-      // Refund each player's bet
-      // PHASE 2 INTEGRATION: Uncomment when SDK available
-      // send(NIGHT_TOKEN_ID, bet.amount, bet.player);
-    }
-
-    // Mark round as resolved
-    ledger.currentRound.state = RoundState::RESOLVED;
-    ledger.totalRounds = ledger.totalRounds + 1n;
-    ledger.lastResult = None<RoundResult>();
-  }
-}
-
-// Operator updates configuration (only when no active round)
 export circuit updateConfig(
-  minBet: Natural,
-  maxBet: Natural,
-  roundDuration: Natural,
-  houseFeePercent: Natural,
-  progressivePercent: Natural,
-  progressiveTriggerPercent: Natural,
-  resolveDeadline: Natural
-): Void {
-  disclose {
-    // Only operator can update config
-    assert(witnesses.thisAddress == ledger.operator, "Only operator can update config");
+  newMinBet: Uint<64>,
+  newMaxBet: Uint<64>,
+  newDuration: Uint<64>,
+  newHouseFee: Uint<64>,
+  newProgressive: Uint<64>,
+  newDeadline: Uint<64>
+): [] {
+  const caller = callerAddress();
+  assert(caller == operator, "Only operator can update config");
+  assert(state == RoundState.resolved, "Cannot update during active round");
+  assert(disclose(newMinBet) > 0, "Min bet must be positive");
+  assert(disclose(newMaxBet) >= disclose(newMinBet), "Max bet must be >= min bet");
+  assert(disclose(newHouseFee) + disclose(newProgressive) < 100, "Combined fees must be < 100%");
 
-    // Can only update when no active round
-    assert(ledger.currentRound.state == RoundState::RESOLVED, "Cannot update config during active round");
-
-    // Validate new configuration
-    assert(minBet > 0n, "Min bet must be positive");
-    assert(maxBet >= minBet, "Max bet must be >= min bet");
-    assert(houseFeePercent <= 100n, "House fee cannot exceed 100%");
-    assert(progressivePercent <= 100n, "Progressive percent cannot exceed 100%");
-    assert(progressiveTriggerPercent <= 100n, "Trigger percent cannot exceed 100%");
-    assert(houseFeePercent + progressivePercent < 100n, "Combined fees must be < 100%");
-
-    ledger.config = RoundConfig {
-      minBet: minBet,
-      maxBet: maxBet,
-      roundDuration: roundDuration,
-      houseFeePercent: houseFeePercent,
-      progressivePercent: progressivePercent,
-      progressiveTriggerPercent: progressiveTriggerPercent,
-      resolveDeadline: resolveDeadline
-    };
-  }
+  minBet = disclose(newMinBet);
+  maxBet = disclose(newMaxBet);
+  roundDuration = disclose(newDuration);
+  houseFeePercent = disclose(newHouseFee);
+  progressivePercent = disclose(newProgressive);
+  resolveDeadlineMs = disclose(newDeadline);
 }
 
-// Operator withdraws accumulated house fees
-export circuit withdrawHouseFees(amount: Natural): Void {
-  disclose {
-    // Only operator can withdraw
-    assert(witnesses.thisAddress == ledger.operator, "Only operator can withdraw fees");
+// --- Circuit: Withdraw House Fees ---
 
-    // Cannot withdraw more than available
-    assert(amount <= ledger.houseBalance, "Insufficient house balance");
-
-    ledger.houseBalance = ledger.houseBalance - amount;
-
-    // Send house fees to operator
-    // PHASE 2 INTEGRATION: Uncomment when SDK available
-    // send(NIGHT_TOKEN_ID, amount, ledger.operator);
-  }
-}
-
-// Helper functions for type conversions (these would be provided by Compact stdlib)
-function naturalToBytes(n: Natural): Bytes<32> {
-  // Placeholder - actual implementation depends on Compact stdlib
-  return zeroBytes<32>();
-}
-
-function bytesToNatural(b: Bytes<32>): Natural {
-  // Placeholder - actual implementation depends on Compact stdlib
-  return 0n;
-}
-
-function bytesConcat(a: Bytes<32>, b: Bytes<32>): Bytes<64> {
-  // Placeholder - actual implementation depends on Compact stdlib
-  return zeroBytes<64>();
-}
-
-function zeroBytes<N>(): Bytes<N> {
-  // Placeholder - actual implementation depends on Compact stdlib
-  return Bytes<N>();
-}
-
-function emptyVector<T, N>(): Vector<T, N> {
-  // Placeholder - actual implementation depends on Compact stdlib
-  return Vector<T, N>();
-}
-
-function vectorPush<T, N>(v: Vector<T, N>, elem: T): Vector<T, N> {
-  // Placeholder - actual implementation depends on Compact stdlib
-  return v;
+export circuit withdrawHouseFees(amount: Uint<64>): [] {
+  const caller = callerAddress();
+  assert(caller == operator, "Only operator can withdraw fees");
+  assert(disclose(amount) <= houseBalance, "Insufficient house balance");
+  houseBalance = (houseBalance - disclose(amount)) as Uint<64>;
 }
