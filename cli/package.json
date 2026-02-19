@@ -1,0 +1,28 @@
+{
+  "name": "@shadow-sniper/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./config": "./dist/config.js",
+    "./wallet": "./dist/wallet.js",
+    "./providers": "./dist/providers.js"
+  },
+  "bin": {
+    "shadow-sniper": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc --project tsconfig.json",
+    "clean": "rm -rf dist",
+    "start": "node --experimental-specifier-resolution=node --loader ts-node/esm src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@shadow-sniper/api": "*",
+    "@shadow-sniper/contract": "*",
+    "commander": "^13.1.0"
+  }
+}

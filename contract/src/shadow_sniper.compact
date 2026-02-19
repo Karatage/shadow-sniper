@@ -1,0 +1,584 @@
+pragma language_version 0.21;
+
+import CompactStandardLibrary;
+
+// ============================================================================
+// ShadowSniper — PvP betting game on Midnight Network
+// ============================================================================
+
+// Round lifecycle: resolved → open → (time expires) → resolving → resolved
+export enum RoundState { resolved, open }
+
+// --- Operator & Configuration ---
+export ledger operator: Bytes<32>;
+export ledger minBet: Uint<64>;
+export ledger maxBet: Uint<64>;
+export ledger roundDurationSecs: Uint<64>;
+export ledger houseFeeBps: Uint<64>;
+export ledger progressiveBps: Uint<64>;
+export ledger progressiveTrigger: Uint<64>;
+export ledger resolveDeadlineSecs: Uint<64>;
+
+// --- Round State ---
+export ledger roundState: RoundState;
+export ledger roundNumber: Counter;
+export ledger commitment: Bytes<32>;
+export ledger roundEndTime: Uint<64>;
+export ledger roundDeadline: Uint<64>;
+export ledger playerCount: Uint<64>;
+export ledger totalPot: Uint<64>;
+
+// --- 10 Fixed Bet Slots (ZK requires fixed-size iteration) ---
+export ledger bet0Active: Boolean;
+export ledger bet0Player: Bytes<32>;
+export ledger bet0Amount: Uint<64>;
+
+export ledger bet1Active: Boolean;
+export ledger bet1Player: Bytes<32>;
+export ledger bet1Amount: Uint<64>;
+
+export ledger bet2Active: Boolean;
+export ledger bet2Player: Bytes<32>;
+export ledger bet2Amount: Uint<64>;
+
+export ledger bet3Active: Boolean;
+export ledger bet3Player: Bytes<32>;
+export ledger bet3Amount: Uint<64>;
+
+export ledger bet4Active: Boolean;
+export ledger bet4Player: Bytes<32>;
+export ledger bet4Amount: Uint<64>;
+
+export ledger bet5Active: Boolean;
+export ledger bet5Player: Bytes<32>;
+export ledger bet5Amount: Uint<64>;
+
+export ledger bet6Active: Boolean;
+export ledger bet6Player: Bytes<32>;
+export ledger bet6Amount: Uint<64>;
+
+export ledger bet7Active: Boolean;
+export ledger bet7Player: Bytes<32>;
+export ledger bet7Amount: Uint<64>;
+
+export ledger bet8Active: Boolean;
+export ledger bet8Player: Bytes<32>;
+export ledger bet8Amount: Uint<64>;
+
+export ledger bet9Active: Boolean;
+export ledger bet9Player: Bytes<32>;
+export ledger bet9Amount: Uint<64>;
+
+// --- Balances ---
+export ledger progressivePool: Uint<64>;
+export ledger houseBalance: Uint<64>;
+
+// --- Last Round Results (for UI/indexer) ---
+export ledger lastWinner: Bytes<32>;
+export ledger lastPayout: Uint<64>;
+export ledger lastJackpotWinner: Bytes<32>;
+export ledger lastJackpotAmount: Uint<64>;
+export ledger totalRoundsPlayed: Counter;
+
+// ============================================================================
+// Constructor
+// ============================================================================
+
+constructor(
+  op: Bytes<32>,
+  initMinBet: Uint<64>,
+  initMaxBet: Uint<64>,
+  initDuration: Uint<64>,
+  initHouseFeeBps: Uint<64>,
+  initProgressiveBps: Uint<64>,
+  initTrigger: Uint<64>,
+  initDeadline: Uint<64>
+) {
+  // Disclose all params (all config is public ledger state)
+  const dOp = disclose(op);
+  const dMinBet = disclose(initMinBet);
+  const dMaxBet = disclose(initMaxBet);
+  const dDuration = disclose(initDuration);
+  const dHouseFeeBps = disclose(initHouseFeeBps);
+  const dProgressiveBps = disclose(initProgressiveBps);
+  const dTrigger = disclose(initTrigger);
+  const dDeadline = disclose(initDeadline);
+
+  // Validate config constraints
+  assert(dMinBet > 0, "Min bet must be > 0");
+  assert(dMaxBet >= dMinBet, "Max bet must be >= min bet");
+  assert(dDuration > 0, "Duration must be > 0");
+  assert(dHouseFeeBps <= 1000, "House fee must be <= 10%");
+  assert(dProgressiveBps <= 500, "Progressive must be <= 5%");
+  assert(dTrigger > 0, "Trigger must be > 0");
+  assert(dDeadline > 0, "Deadline must be > 0");
+
+  operator = dOp;
+  minBet = dMinBet;
+  maxBet = dMaxBet;
+  roundDurationSecs = dDuration;
+  houseFeeBps = dHouseFeeBps;
+  progressiveBps = dProgressiveBps;
+  progressiveTrigger = dTrigger;
+  resolveDeadlineSecs = dDeadline;
+
+  roundState = RoundState.resolved;
+  roundNumber.increment(1);
+  commitment = default<Bytes<32>>;
+  roundEndTime = 0;
+  roundDeadline = 0;
+  playerCount = 0;
+  totalPot = 0;
+
+  // Clear all bet slots
+  bet0Active = false; bet0Player = default<Bytes<32>>; bet0Amount = 0;
+  bet1Active = false; bet1Player = default<Bytes<32>>; bet1Amount = 0;
+  bet2Active = false; bet2Player = default<Bytes<32>>; bet2Amount = 0;
+  bet3Active = false; bet3Player = default<Bytes<32>>; bet3Amount = 0;
+  bet4Active = false; bet4Player = default<Bytes<32>>; bet4Amount = 0;
+  bet5Active = false; bet5Player = default<Bytes<32>>; bet5Amount = 0;
+  bet6Active = false; bet6Player = default<Bytes<32>>; bet6Amount = 0;
+  bet7Active = false; bet7Player = default<Bytes<32>>; bet7Amount = 0;
+  bet8Active = false; bet8Player = default<Bytes<32>>; bet8Amount = 0;
+  bet9Active = false; bet9Player = default<Bytes<32>>; bet9Amount = 0;
+
+  progressivePool = 0;
+  houseBalance = 0;
+
+  lastWinner = default<Bytes<32>>;
+  lastPayout = 0;
+  lastJackpotWinner = default<Bytes<32>>;
+  lastJackpotAmount = 0;
+}
+
+// ============================================================================
+// Witness — operator identity verification
+// ============================================================================
+
+witness operatorSecretKey(): Bytes<32>;
+
+// ============================================================================
+// Pure circuits for off-chain computation + on-chain verification
+// ============================================================================
+
+// Derive operator public key from secret key
+export circuit operatorPublicKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Bytes<32>>(sk);
+}
+
+// Create commitment from secret and round number
+export circuit makeCommitment(secret: Bytes<32>, rn: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([secret, rn]);
+}
+
+// Derive random seed from secret, round number, and total pot
+export circuit deriveSeed(secret: Bytes<32>, rn: Bytes<32>, pot: Bytes<32>): Bytes<32> {
+  const inner = persistentHash<Vector<2, Bytes<32>>>([secret, rn]);
+  return persistentHash<Vector<2, Bytes<32>>>([inner, pot]);
+}
+
+// Derive progressive seed from main seed and pot
+export circuit deriveProgressiveSeed(seed: Bytes<32>, pot: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([seed, pot]);
+}
+
+// ============================================================================
+// Circuit 1: startRound — operator starts a new round
+// ============================================================================
+
+export circuit startRound(newCommitment: Bytes<32>, endTime: Uint<64>): [] {
+  // Verify operator identity
+  const opKey = disclose(operatorPublicKey(operatorSecretKey()));
+  assert(opKey == operator, "Not the operator");
+
+  // Must be in resolved state
+  assert(roundState == RoundState.resolved, "Round already active");
+
+  // Disclose params (public round config)
+  const dCommitment = disclose(newCommitment);
+  const dEndTime = disclose(endTime);
+
+  // Validate round end time is in the future
+  blockTimeLt(dEndTime);
+
+  // Set round state
+  roundState = RoundState.open;
+  commitment = dCommitment;
+  roundEndTime = dEndTime;
+  roundDeadline = disclose((dEndTime + resolveDeadlineSecs) as Uint<64>);
+  playerCount = 0;
+  totalPot = 0;
+
+  // Clear all bet slots
+  bet0Active = false; bet0Player = default<Bytes<32>>; bet0Amount = 0;
+  bet1Active = false; bet1Player = default<Bytes<32>>; bet1Amount = 0;
+  bet2Active = false; bet2Player = default<Bytes<32>>; bet2Amount = 0;
+  bet3Active = false; bet3Player = default<Bytes<32>>; bet3Amount = 0;
+  bet4Active = false; bet4Player = default<Bytes<32>>; bet4Amount = 0;
+  bet5Active = false; bet5Player = default<Bytes<32>>; bet5Amount = 0;
+  bet6Active = false; bet6Player = default<Bytes<32>>; bet6Amount = 0;
+  bet7Active = false; bet7Player = default<Bytes<32>>; bet7Amount = 0;
+  bet8Active = false; bet8Player = default<Bytes<32>>; bet8Amount = 0;
+  bet9Active = false; bet9Player = default<Bytes<32>>; bet9Amount = 0;
+
+  // Clear last round results
+  lastWinner = default<Bytes<32>>;
+  lastPayout = 0;
+  lastJackpotWinner = default<Bytes<32>>;
+  lastJackpotAmount = 0;
+}
+
+// ============================================================================
+// Circuit 2: placeBet — player places a bet
+// ============================================================================
+
+// TODO Phase 2b: Add `coin: CoinInfo` parameter and `receive(coin)` for token deposits
+export circuit placeBet(betAmount: Uint<64>): [] {
+  // Round must be open
+  assert(roundState == RoundState.open, "Round not open");
+
+  // Must be before round end time
+  blockTimeLt(roundEndTime);
+
+  // Disclose bet amount and player identity (public bets)
+  const dBetAmount = disclose(betAmount);
+  const player = disclose(ownPublicKey().bytes);
+
+  // Validate bet amount
+  assert(dBetAmount >= minBet, "Bet below minimum");
+  assert(dBetAmount <= maxBet, "Bet above maximum");
+
+  // Check player hasn't already bet (check all active slots)
+  assert(!(bet0Active && bet0Player == player), "Already placed a bet");
+  assert(!(bet1Active && bet1Player == player), "Already placed a bet");
+  assert(!(bet2Active && bet2Player == player), "Already placed a bet");
+  assert(!(bet3Active && bet3Player == player), "Already placed a bet");
+  assert(!(bet4Active && bet4Player == player), "Already placed a bet");
+  assert(!(bet5Active && bet5Player == player), "Already placed a bet");
+  assert(!(bet6Active && bet6Player == player), "Already placed a bet");
+  assert(!(bet7Active && bet7Player == player), "Already placed a bet");
+  assert(!(bet8Active && bet8Player == player), "Already placed a bet");
+  assert(!(bet9Active && bet9Player == player), "Already placed a bet");
+
+  // Find first empty slot and place bet
+  if (!bet0Active) {
+    bet0Active = true; bet0Player = player; bet0Amount = dBetAmount;
+  } else { if (!bet1Active) {
+    bet1Active = true; bet1Player = player; bet1Amount = dBetAmount;
+  } else { if (!bet2Active) {
+    bet2Active = true; bet2Player = player; bet2Amount = dBetAmount;
+  } else { if (!bet3Active) {
+    bet3Active = true; bet3Player = player; bet3Amount = dBetAmount;
+  } else { if (!bet4Active) {
+    bet4Active = true; bet4Player = player; bet4Amount = dBetAmount;
+  } else { if (!bet5Active) {
+    bet5Active = true; bet5Player = player; bet5Amount = dBetAmount;
+  } else { if (!bet6Active) {
+    bet6Active = true; bet6Player = player; bet6Amount = dBetAmount;
+  } else { if (!bet7Active) {
+    bet7Active = true; bet7Player = player; bet7Amount = dBetAmount;
+  } else { if (!bet8Active) {
+    bet8Active = true; bet8Player = player; bet8Amount = dBetAmount;
+  } else { if (!bet9Active) {
+    bet9Active = true; bet9Player = player; bet9Amount = dBetAmount;
+  } else {
+    assert(false, "Round is full (max 10 players)");
+  }}}}}}}}}}
+
+  playerCount = (playerCount + 1) as Uint<64>;
+  totalPot = (totalPot + dBetAmount) as Uint<64>;
+}
+
+// ============================================================================
+// Circuit 3: resolveRound — operator reveals secret, determines winners
+// ============================================================================
+
+// TODO Phase 2b: Add `contractBalance: QualifiedCoinInfo` parameter and send() calls for payouts
+export circuit resolveRound(
+  secret: Bytes<32>,
+  winnerAddress: Bytes<32>,
+  payoutAmount: Uint<64>,
+  houseFeeAmount: Uint<64>,
+  progressiveAmount: Uint<64>,
+  jackpotTriggered: Boolean,
+  jackpotWinnerAddress: Bytes<32>,
+  rngTarget: Uint<64>,
+  rngQuotient: Uint<64>,
+  progRemainder: Uint<64>,
+  progQuotient: Uint<64>,
+  progWinnerIndex: Uint<64>,
+  progWinnerQuotient: Uint<64>
+): [] {
+  // Verify operator identity
+  const opKey = disclose(operatorPublicKey(operatorSecretKey()));
+  assert(opKey == operator, "Not the operator");
+
+  // Round must be open
+  assert(roundState == RoundState.open, "No active round");
+
+  // Must be after round end time
+  blockTimeGt(roundEndTime);
+
+  // Must be before resolve deadline
+  blockTimeLt(roundDeadline);
+
+  // Disclose all params (all resolution data is public)
+  const dSecret = disclose(secret);
+  const dWinner = disclose(winnerAddress);
+  const dPayout = disclose(payoutAmount);
+  const dHouseFee = disclose(houseFeeAmount);
+  const dProgressive = disclose(progressiveAmount);
+  const dJackpot = disclose(jackpotTriggered);
+  const dJackpotWinner = disclose(jackpotWinnerAddress);
+  const dRngTarget = disclose(rngTarget);
+  const dRngQuotient = disclose(rngQuotient);
+  const dProgRemainder = disclose(progRemainder);
+  const dProgQuotient = disclose(progQuotient);
+  const dProgWinnerIndex = disclose(progWinnerIndex);
+  const dProgWinnerQuotient = disclose(progWinnerQuotient);
+
+  // Handle based on player count
+  if (playerCount == 0) {
+    // No players: no payouts, no fees
+    assert(dPayout == 0, "No payout for empty round");
+    assert(dHouseFee == 0, "No fees for empty round");
+    assert(dProgressive == 0, "No progressive for empty round");
+    assert(!dJackpot, "No jackpot for empty round");
+  } else { if (playerCount == 1) {
+    // Single player: full refund, no fees
+    assert(dPayout == totalPot, "Single player gets full refund");
+    assert(dHouseFee == 0, "No fees for single player");
+    assert(dProgressive == 0, "No progressive for single player");
+    assert(!dJackpot, "No jackpot for single player");
+
+    // Winner is the only player
+    if (bet0Active) { assert(dWinner == bet0Player, "Wrong winner"); }
+    else { if (bet1Active) { assert(dWinner == bet1Player, "Wrong winner"); }
+    else { if (bet2Active) { assert(dWinner == bet2Player, "Wrong winner"); }
+    else { if (bet3Active) { assert(dWinner == bet3Player, "Wrong winner"); }
+    else { if (bet4Active) { assert(dWinner == bet4Player, "Wrong winner"); }
+    else { if (bet5Active) { assert(dWinner == bet5Player, "Wrong winner"); }
+    else { if (bet6Active) { assert(dWinner == bet6Player, "Wrong winner"); }
+    else { if (bet7Active) { assert(dWinner == bet7Player, "Wrong winner"); }
+    else { if (bet8Active) { assert(dWinner == bet8Player, "Wrong winner"); }
+    else { if (bet9Active) { assert(dWinner == bet9Player, "Wrong winner"); }
+    else { assert(false, "No active player found"); }
+    }}}}}}}}}
+
+    // TODO Phase 2b: send refund to the single player
+  } else {
+    // 2+ players: normal resolution with fees and RNG
+
+    // Verify commitment: persistentHash(secret, roundNumber) == commitment
+    const rn = roundNumber as Field as Bytes<32>;
+    const computedCommitment = makeCommitment(dSecret, rn);
+    assert(computedCommitment == commitment, "Invalid secret");
+
+    // Verify fee math via multiplication (avoids division)
+    // houseFeeAmount * 10000 == totalPot * houseFeeBps
+    assert(dHouseFee * 10000 == totalPot * houseFeeBps, "Invalid house fee");
+    assert(dProgressive * 10000 == totalPot * progressiveBps, "Invalid progressive amount");
+
+    // Verify payout: winner gets pot minus fees
+    assert(dPayout == totalPot - dHouseFee - dProgressive, "Invalid payout");
+
+    // Derive random seed
+    const potBytes = totalPot as Field as Bytes<32>;
+    const seed = deriveSeed(dSecret, rn, potBytes);
+
+    // Convert seed to uint for modular arithmetic
+    const seedField = seed as Field;
+    const seedUint = seedField as Uint<64>;
+
+    // Verify rngTarget = seedUint mod totalPot (no % operator in Compact)
+    assert(dRngQuotient * totalPot + dRngTarget == seedUint, "Invalid RNG quotient");
+    assert(dRngTarget < totalPot, "Invalid RNG target");
+    const target = dRngTarget;
+
+    // Weighted winner selection — unrolled fold over 10 slots
+    const cum0 = (bet0Active ? bet0Amount : 0);
+    const found0 = bet0Active && target < cum0;
+    const winner0 = found0 ? bet0Player : default<Bytes<32>>;
+
+    const cum1 = cum0 + (bet1Active ? bet1Amount : 0);
+    const found1 = found0 || (bet1Active && !found0 && target < cum1);
+    const winner1 = (!found0 && bet1Active && target < cum1) ? bet1Player : winner0;
+
+    const cum2 = cum1 + (bet2Active ? bet2Amount : 0);
+    const found2 = found1 || (bet2Active && !found1 && target < cum2);
+    const winner2 = (!found1 && bet2Active && target < cum2) ? bet2Player : winner1;
+
+    const cum3 = cum2 + (bet3Active ? bet3Amount : 0);
+    const found3 = found2 || (bet3Active && !found2 && target < cum3);
+    const winner3 = (!found2 && bet3Active && target < cum3) ? bet3Player : winner2;
+
+    const cum4 = cum3 + (bet4Active ? bet4Amount : 0);
+    const found4 = found3 || (bet4Active && !found3 && target < cum4);
+    const winner4 = (!found3 && bet4Active && target < cum4) ? bet4Player : winner3;
+
+    const cum5 = cum4 + (bet5Active ? bet5Amount : 0);
+    const found5 = found4 || (bet5Active && !found4 && target < cum5);
+    const winner5 = (!found4 && bet5Active && target < cum5) ? bet5Player : winner4;
+
+    const cum6 = cum5 + (bet6Active ? bet6Amount : 0);
+    const found6 = found5 || (bet6Active && !found5 && target < cum6);
+    const winner6 = (!found5 && bet6Active && target < cum6) ? bet6Player : winner5;
+
+    const cum7 = cum6 + (bet7Active ? bet7Amount : 0);
+    const found7 = found6 || (bet7Active && !found6 && target < cum7);
+    const winner7 = (!found6 && bet7Active && target < cum7) ? bet7Player : winner6;
+
+    const cum8 = cum7 + (bet8Active ? bet8Amount : 0);
+    const found8 = found7 || (bet8Active && !found7 && target < cum8);
+    const winner8 = (!found7 && bet8Active && target < cum8) ? bet8Player : winner7;
+
+    const cum9 = cum8 + (bet9Active ? bet9Amount : 0);
+    const found9 = found8 || (bet9Active && !found8 && target < cum9);
+    const winner9 = (!found8 && bet9Active && target < cum9) ? bet9Player : winner8;
+
+    assert(found9, "Winner not found");
+    assert(winner9 == dWinner, "Wrong winner");
+
+    // Progressive jackpot check
+    const progSeed = deriveProgressiveSeed(seed, potBytes);
+    const progSeedField = progSeed as Field;
+    const progSeedUint = progSeedField as Uint<64>;
+    // Verify progressive trigger: progSeedUint mod progressiveTrigger
+    assert(dProgQuotient * progressiveTrigger + dProgRemainder == progSeedUint, "Invalid prog quotient");
+    assert(dProgRemainder < progressiveTrigger, "Invalid prog remainder");
+    const progTriggered = dProgRemainder == 0;
+    assert(dJackpot == progTriggered, "Jackpot trigger mismatch");
+
+    if (dJackpot) {
+      // Progressive winner: equal probability, pick by player index
+      assert(dProgWinnerQuotient * playerCount + dProgWinnerIndex == progSeedUint, "Invalid prog winner quotient");
+      assert(dProgWinnerIndex < playerCount, "Invalid prog winner index");
+
+      // Unrolled index lookup
+      const pw0 = (dProgWinnerIndex == 0 && bet0Active) ? bet0Player : default<Bytes<32>>;
+      const pw1 = (dProgWinnerIndex == 1 && bet1Active) ? bet1Player : pw0;
+      const pw2 = (dProgWinnerIndex == 2 && bet2Active) ? bet2Player : pw1;
+      const pw3 = (dProgWinnerIndex == 3 && bet3Active) ? bet3Player : pw2;
+      const pw4 = (dProgWinnerIndex == 4 && bet4Active) ? bet4Player : pw3;
+      const pw5 = (dProgWinnerIndex == 5 && bet5Active) ? bet5Player : pw4;
+      const pw6 = (dProgWinnerIndex == 6 && bet6Active) ? bet6Player : pw5;
+      const pw7 = (dProgWinnerIndex == 7 && bet7Active) ? bet7Player : pw6;
+      const pw8 = (dProgWinnerIndex == 8 && bet8Active) ? bet8Player : pw7;
+      const pw9 = (dProgWinnerIndex == 9 && bet9Active) ? bet9Player : pw8;
+
+      assert(pw9 == dJackpotWinner, "Wrong jackpot winner");
+
+      // Award progressive pool
+      lastJackpotWinner = dJackpotWinner;
+      lastJackpotAmount = progressivePool;
+      progressivePool = 0;
+    } else {
+      assert(dJackpotWinner == default<Bytes<32>>, "Jackpot not triggered");
+      lastJackpotWinner = default<Bytes<32>>;
+      lastJackpotAmount = 0;
+    }
+
+    // Update balances
+    houseBalance = (houseBalance + dHouseFee) as Uint<64>;
+    progressivePool = (progressivePool + dProgressive) as Uint<64>;
+
+    // Store results for UI
+    lastWinner = dWinner;
+    lastPayout = dPayout;
+
+    // TODO Phase 2b: send payout to winner and jackpot if triggered
+  }}
+
+  // Transition state
+  roundState = RoundState.resolved;
+  totalRoundsPlayed.increment(1);
+}
+
+// ============================================================================
+// Circuit 4: cancelRound — anyone can cancel after deadline expires
+// ============================================================================
+
+// TODO Phase 2b: Add `contractBalance: QualifiedCoinInfo` parameter and chained send() refunds
+export circuit cancelRound(): [] {
+  // Round must be open
+  assert(roundState == RoundState.open, "No active round");
+
+  // Must be after resolve deadline
+  blockTimeGt(roundDeadline);
+
+  // Transition state
+  roundState = RoundState.resolved;
+
+  // Clear results
+  lastWinner = default<Bytes<32>>;
+  lastPayout = 0;
+  lastJackpotWinner = default<Bytes<32>>;
+  lastJackpotAmount = 0;
+}
+
+// ============================================================================
+// Circuit 5: updateConfig — operator updates game parameters
+// ============================================================================
+
+export circuit updateConfig(
+  newMinBet: Uint<64>,
+  newMaxBet: Uint<64>,
+  newDuration: Uint<64>,
+  newHouseFeeBps: Uint<64>,
+  newProgressiveBps: Uint<64>,
+  newTrigger: Uint<64>,
+  newDeadline: Uint<64>
+): [] {
+  // Verify operator identity
+  const opKey = disclose(operatorPublicKey(operatorSecretKey()));
+  assert(opKey == operator, "Not the operator");
+
+  // Must be in resolved state
+  assert(roundState == RoundState.resolved, "Cannot update during active round");
+
+  // Disclose all params (public config)
+  const dMinBet = disclose(newMinBet);
+  const dMaxBet = disclose(newMaxBet);
+  const dDuration = disclose(newDuration);
+  const dHouseFeeBps = disclose(newHouseFeeBps);
+  const dProgressiveBps = disclose(newProgressiveBps);
+  const dTrigger = disclose(newTrigger);
+  const dDeadline = disclose(newDeadline);
+
+  // Validate constraints
+  assert(dMinBet > 0, "Min bet must be > 0");
+  assert(dMaxBet >= dMinBet, "Max bet must be >= min bet");
+  assert(dDuration > 0, "Duration must be > 0");
+  assert(dHouseFeeBps <= 1000, "House fee must be <= 10%");
+  assert(dProgressiveBps <= 500, "Progressive must be <= 5%");
+  assert(dTrigger > 0, "Trigger must be > 0");
+  assert(dDeadline > 0, "Deadline must be > 0");
+
+  minBet = dMinBet;
+  maxBet = dMaxBet;
+  roundDurationSecs = dDuration;
+  houseFeeBps = dHouseFeeBps;
+  progressiveBps = dProgressiveBps;
+  progressiveTrigger = dTrigger;
+  resolveDeadlineSecs = dDeadline;
+}
+
+// ============================================================================
+// Circuit 6: withdrawHouseFees — operator withdraws accumulated fees
+// ============================================================================
+
+// TODO Phase 2b: Add `contractBalance: QualifiedCoinInfo` parameter and send() to operator
+export circuit withdrawHouseFees(amount: Uint<64>): [] {
+  // Verify operator identity
+  const opKey = disclose(operatorPublicKey(operatorSecretKey()));
+  assert(opKey == operator, "Not the operator");
+
+  // Disclose amount (public operation)
+  const dAmount = disclose(amount);
+
+  // Validate amount
+  assert(dAmount > 0, "Amount must be > 0");
+  assert(dAmount <= houseBalance, "Insufficient house balance");
+
+  houseBalance = houseBalance - dAmount;
+}

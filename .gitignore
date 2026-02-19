@@ -1,0 +1,27 @@
+node_modules/
+dist/
+*.js.map
+*.d.ts.map
+
+# Compact compiler output (generated, but tracked for workspace deps)
+# contract/src/managed/
+
+# Local state
+.shadow-sniper/
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+!.env.example
