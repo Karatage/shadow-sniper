@@ -1,77 +1,78 @@
 /**
- * Time utilities for round management
+ * Time utilities for ShadowSniper.
+ *
+ * @module
  */
 
 /**
- * Convert milliseconds to a human-readable duration string
+ * Format a duration in seconds to a human-readable string.
+ *
+ * @param seconds - Duration in seconds
+ * @returns Formatted string like "5m 30s" or "1h 2m"
  */
-export function formatDuration(ms: bigint): string {
-  const seconds = Number(ms) / 1000;
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
+export function formatDuration(seconds: bigint | number): string {
+  const secs = typeof seconds === 'bigint' ? Number(seconds) : seconds;
 
-  if (hours > 0) {
-    return `${hours}h ${minutes % 60}m`;
+  if (secs <= 0) return '0s';
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
   }
-  if (minutes > 0) {
-    return `${minutes}m ${Math.floor(seconds % 60)}s`;
-  }
-  return `${Math.floor(seconds)}s`;
+
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 /**
- * Calculate time remaining until a deadline
+ * Get the time remaining until a target unix timestamp.
+ *
+ * @param targetTimeSecs - Unix timestamp in seconds
+ * @returns Remaining seconds (0 if past)
  */
-export function getTimeRemaining(deadline: bigint, currentTime?: bigint): bigint {
-  const now = currentTime ?? BigInt(Date.now());
-  const remaining = deadline - now;
+export function timeRemaining(targetTimeSecs: bigint): bigint {
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  const remaining = targetTimeSecs - now;
   return remaining > 0n ? remaining : 0n;
 }
 
 /**
- * Check if a round is currently open for betting
+ * Check if a round's betting period has expired.
+ *
+ * @param roundEndTime - Unix timestamp when round ends (seconds)
+ * @returns true if current time is past round end
  */
-export function isRoundOpen(startTime: bigint, endTime: bigint, currentTime?: bigint): boolean {
-  const now = currentTime ?? BigInt(Date.now());
-  return now >= startTime && now < endTime;
+export function isRoundExpired(roundEndTime: bigint): boolean {
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  return now > roundEndTime;
 }
 
 /**
- * Check if a round is ready to be resolved
+ * Check if the resolve deadline has expired.
+ *
+ * @param roundDeadline - Unix timestamp of resolve deadline (seconds)
+ * @returns true if current time is past deadline
  */
-export function isReadyToResolve(endTime: bigint, currentTime?: bigint): boolean {
-  const now = currentTime ?? BigInt(Date.now());
-  return now >= endTime;
+export function isResolveDeadlineExpired(roundDeadline: bigint): boolean {
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  return now > roundDeadline;
 }
 
 /**
- * Check if a round has passed its resolve deadline
+ * Get the current unix timestamp in seconds.
  */
-export function hasPassedDeadline(resolveDeadline: bigint, currentTime?: bigint): boolean {
-  const now = currentTime ?? BigInt(Date.now());
-  return now > resolveDeadline;
+export function nowSecs(): bigint {
+  return BigInt(Math.floor(Date.now() / 1000));
 }
 
 /**
- * Format a timestamp to ISO string
+ * Compute a round end time from now + duration.
+ *
+ * @param durationSecs - Round duration in seconds
+ * @returns Unix timestamp for round end
  */
-export function formatTimestamp(timestamp: bigint): string {
-  return new Date(Number(timestamp)).toISOString();
+export function computeRoundEndTime(durationSecs: bigint): bigint {
+  return nowSecs() + durationSecs;
 }
-
-/**
- * Get current time in milliseconds as bigint
- */
-export function now(): bigint {
-  return BigInt(Date.now());
-}
-
-/**
- * Default round duration: 5 minutes
- */
-export const DEFAULT_ROUND_DURATION = 300_000n;
-
-/**
- * Default resolve deadline: 5 minutes after round ends
- */
-export const DEFAULT_RESOLVE_DEADLINE = 300_000n;

@@ -1,46 +1,49 @@
 /**
- * Deploy command - Deploy a new ShadowSniper contract
+ * Deploy command — deploys a new ShadowSniper contract.
+ *
+ * @module
  */
 
-import { ShadowSniperAPI } from '@shadow-sniper/api';
+import { Command } from 'commander';
+import { ShadowSniperAPI, utils } from '@shadow-sniper/api';
+import { type Logger } from 'pino';
+import { type ShadowSniperProviders } from '@shadow-sniper/api';
 
-export interface DeployOptions {
-  operator: string;
-  minBet?: string;
-  maxBet?: string;
-  roundDuration?: string;
-  houseFee?: string;
-  progressive?: string;
-  progressiveTrigger?: string;
-  resolveDeadline?: string;
-}
+export function deployCommand(getProviders: () => Promise<ShadowSniperProviders>, logger: Logger): Command {
+  return new Command('deploy')
+    .description('Deploy a new ShadowSniper contract')
+    .option('--min-bet <amount>', 'Minimum bet amount', '100')
+    .option('--max-bet <amount>', 'Maximum bet amount', '10000')
+    .option('--duration <seconds>', 'Round duration in seconds', '300')
+    .option('--house-fee <bps>', 'House fee in basis points (300 = 3%)', '300')
+    .option('--progressive <bps>', 'Progressive contribution in basis points', '100')
+    .option('--trigger <denominator>', 'Progressive trigger denominator', '100')
+    .option('--deadline <seconds>', 'Resolve deadline in seconds', '300')
+    .action(async (opts) => {
+      const providers = await getProviders();
 
-export async function deployCommand(options: DeployOptions): Promise<void> {
-  console.log('🚀 Deploying ShadowSniper contract...\n');
+      // Generate operator key from wallet
+      const operatorSecret = utils.generateSecret();
+      const operatorPubKey = new Uint8Array(32); // Will be derived from wallet's public key
 
-  const api = new ShadowSniperAPI();
+      logger.info('Deploying ShadowSniper contract...');
 
-  try {
-    const deployment = await api.deploy({
-      operatorAddress: options.operator,
-      minBet: options.minBet ? BigInt(options.minBet) : undefined,
-      maxBet: options.maxBet ? BigInt(options.maxBet) : undefined,
-      roundDuration: options.roundDuration ? BigInt(options.roundDuration) : undefined,
-      houseFeePercent: options.houseFee ? BigInt(options.houseFee) : undefined,
-      progressivePercent: options.progressive ? BigInt(options.progressive) : undefined,
-      progressiveTriggerPercent: options.progressiveTrigger ? BigInt(options.progressiveTrigger) : undefined,
-      resolveDeadline: options.resolveDeadline ? BigInt(options.resolveDeadline) : undefined
+      const api = await ShadowSniperAPI.deploy(
+        providers,
+        operatorPubKey,
+        {
+          minBet: BigInt(opts.minBet),
+          maxBet: BigInt(opts.maxBet),
+          roundDurationSecs: BigInt(opts.duration),
+          houseFeeBps: BigInt(opts.houseFee),
+          progressiveBps: BigInt(opts.progressive),
+          progressiveTrigger: BigInt(opts.trigger),
+          resolveDeadlineSecs: BigInt(opts.deadline),
+        },
+        logger,
+      );
+
+      console.log(`Contract deployed at: ${api.contractAddress}`);
+      console.log('Save this address — you need it for all other commands.');
     });
-
-    console.log('✅ Contract deployed successfully!\n');
-    console.log(`Contract Address: ${deployment.contractAddress}`);
-    console.log(`Transaction Hash: ${deployment.transactionHash}`);
-    console.log(`Block Number: ${deployment.blockNumber}\n`);
-
-    console.log('💡 Save the contract address to interact with the game later.');
-    console.log(`   Example: shadow-sniper status --contract ${deployment.contractAddress}`);
-  } catch (error) {
-    console.error('❌ Deployment failed:', error instanceof Error ? error.message : error);
-    process.exit(1);
-  }
 }

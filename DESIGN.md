@@ -10,9 +10,11 @@ All game logic runs on-chain via a Compact smart contract.
 
 ### Rounds
 
-- Rounds run continuously, each lasting **5 minutes** (configurable).
-- An operator service manages the round lifecycle automatically.
+- Rounds are **sequential** — only one round is active at a time, with no overlap.
+- Each round lasts **5 minutes** (configurable).
+- An operator service manages the round lifecycle automatically, starting the next round immediately after resolving the previous one to minimize dead time.
 - Players can join any open round by placing a bet.
+- A **minimum of 2 players** is required for a round to resolve with a winner. 0 players = no payout; 1 player = full refund (no fees charged); 2+ players = normal resolution.
 
 ### Betting
 
@@ -25,7 +27,7 @@ All game logic runs on-chain via a Compact smart contract.
 When the round ends, a winner is selected via **weighted random selection**:
 
 - Each player's chance of winning is proportional to their bet size relative to the total pot.
-- Example: if the pot is 1000 NIGHT and you bet 200 NIGHT, you have a 20% chance of winning.
+- Example: if the pot is 1000 tDUST and you bet 200 tDUST, you have a 20% chance of winning.
 
 The winner receives the pot minus two deductions:
 
@@ -44,21 +46,21 @@ Key properties:
 - **Equal odds** — every player in the round has the same chance of winning, regardless of bet size. This is the "equalizer" that keeps the game exciting for everyone.
 - **Independent RNG** — the progressive winner is determined by a separate random roll from the main pot winner.
 - **Both can be won** — a lucky player can win the main pot AND the progressive jackpot in the same round.
-- **Trigger probability** — the jackpot doesn't fire every round. There's a configurable chance (e.g., 1 in 100) that it triggers in any given round. When it doesn't trigger, the pool keeps growing.
+- **Trigger probability** — the jackpot doesn't fire every round. The trigger is deterministic: `seed % triggerDenominator == 0`, where `triggerDenominator` defaults to 100 (giving a 1-in-100 chance per round). The seed comes from the commit-reveal scheme, so the trigger is verifiable and unpredictable. When it doesn't trigger, the pool keeps growing.
 - **Full payout** — when triggered, the entire progressive pool is awarded to the winner.
 
 ### Configurable Parameters
 
-| Parameter | Default | Description |
-|---|---|---|
-| Round duration | 5 minutes | How long each betting round lasts |
-| House fee | 3% | Percentage of pot taken as operator revenue |
-| Progressive contribution | 1% | Percentage of pot added to progressive pool |
-| Minimum bet | TBD | Lowest allowed bet per player |
-| Maximum bet | TBD | Highest allowed bet per player (fairness cap) |
-| Max players | 50 | Maximum players per round (compile-time bound) |
-| Progressive trigger | 1 in 100 | Probability of progressive jackpot firing per round |
-| Resolve deadline | 5 minutes | Time after round end for operator to resolve before cancellation is allowed |
+| Parameter | Default | Type | Description |
+|---|---|---|---|
+| Round duration | 5 minutes | `Uint<32>` | How long each betting round lasts (in seconds) |
+| House fee | 3% | `Uint<32>` | Percentage of pot taken as operator revenue (basis points) |
+| Progressive contribution | 1% | `Uint<32>` | Percentage of pot added to progressive pool (basis points) |
+| Minimum bet | TBD | `Uint<64>` | Lowest allowed bet per player |
+| Maximum bet | TBD | `Uint<64>` | Highest allowed bet per player (fairness cap) |
+| Max players | 50 | `Uint<32>` | Maximum players per round (compile-time bound) |
+| Progressive trigger | 1 in 100 | `Uint<32>` | Denominator for `seed % triggerDenominator == 0` check |
+| Resolve deadline | 5 minutes | `Uint<32>` | Time after round end for operator to resolve before cancellation is allowed (in seconds) |
 
 All parameters except max players can be changed by the operator between rounds. Max players is a compile-time constant due to Compact's bounded iteration requirement.
 
@@ -68,10 +70,10 @@ Midnight Network uses zero-knowledge proofs, which means smart contract circuits
 
 ### How It Works
 
-1. **Before the round opens**, the operator generates a random secret and publishes a **commitment** (hash of the secret + round number) on-chain. At this point, no bets have been placed — the operator cannot know the outcome.
+1. **When starting the round**, the operator generates a random secret and passes the **commitment** (hash of the secret + round number) as an argument to `startRound()`. This is atomic — one transaction opens the round with a locked commitment. At this point, no bets have been placed — the operator cannot know the outcome.
 2. **During the round**, players place their bets. The operator's commitment is already locked.
 3. **After the round ends**, the operator **reveals** the secret. The contract verifies it matches the commitment.
-4. The **random seed** is derived from: `hash(secret, roundNumber, totalPot)`. Including the total pot adds entropy that the operator couldn't predict at commit time.
+4. The **random seed** is derived from: `hash(secret, roundNumber, totalPot)`. Including the total pot adds entropy, though it provides limited additional unpredictability since the operator may be able to predict pot totals in low-traffic rounds. A future iteration could mix in individual player addresses or bet ordering for stronger entropy.
 5. The seed determines both the main pot winner (weighted selection) and the progressive jackpot winner (equal selection).
 
 ### Weighted Winner Selection
@@ -97,29 +99,43 @@ A separate seed (derived from the main seed) is used to pick a random player ind
 
 If the operator fails to reveal their secret within the resolve deadline (e.g., 5 minutes after round end), **anyone** can call `cancelRound()` to refund all bets. This prevents the operator from holding funds hostage.
 
+Cancelled rounds **do not affect the progressive pool** — since all bets are refunded in full, no contribution is collected.
+
 ## Token Model
 
-ShadowSniper uses Midnight's native **NIGHT** tokens for all bets and payouts.
+ShadowSniper uses **tDUST** (testnet) / **DUST** (mainnet) tokens for all bets and payouts. These are Midnight's native tokens — tDUST is used during development and testing, while DUST is the production token on mainnet. Throughout this document, "tDUST" refers to whichever variant applies to the current network.
 
 ### Token Flow
 
 ```
-Player Wallet (NIGHT)
+Player Wallet (tDUST)
         │
-        │ placeBet() — player sends NIGHT to contract
+        │ placeBet() — player sends tDUST to contract
         ▼
    Contract Escrow (holds all bets)
         │
-        │ resolveRound()
-        ├──────────────────────────────────────┐
-        ▼                                      ▼
-   Winner Payout (96%)              House Fee (3%) + Progressive (1%)
-   → sent to winner's wallet        → house balance (withdrawable)
-                                    → progressive pool (accumulates)
+        ├── resolveRound()
+        │   ├──────────────────────────────────────┐
+        │   ▼                                      ▼
+        │  Winner Payout (96%)          House Fee (3%) + Progressive (1%)
+        │  → sent to winner's wallet    → house balance (withdrawable)
+        │                               → progressive pool (accumulates)
+        │
+        └── cancelRound() (operator failed to resolve in time)
+            ▼
+        Full Refund (100%)
+        → each player's bet returned to their wallet
+        → no fees charged, progressive pool unchanged
 ```
 
 - **House fees** accumulate in the contract and are withdrawn by the operator via `withdrawHouseFees()`.
 - **Progressive pool** stays in the contract until a jackpot is triggered, then the full amount is sent to the winner.
+
+## Operator Authentication
+
+The operator is identified by a **public key stored in contract state**, set at deploy time. All operator-only actions (`startRound()`, `resolveRound()`, `withdrawHouseFees()`, and config updates) require proving ownership of the corresponding private key via a **witness** (Midnight's mechanism for private proof verification).
+
+This means only the entity that deployed the contract can operate the game. Key rotation is listed under Future Considerations — for now, the operator key is immutable after deployment.
 
 ## Data Transparency
 

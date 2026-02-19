@@ -1,65 +1,53 @@
 /**
- * Bet command - Place a bet in the current round
+ * Bet command — place a bet in the current round.
+ *
+ * @module
  */
 
-import { ShadowSniperAPI, formatDuration } from '@shadow-sniper/api';
+import { Command } from 'commander';
+import { ShadowSniperAPI, RoundStatus } from '@shadow-sniper/api';
+import { type Logger } from 'pino';
 
-export interface BetOptions {
-  contract: string;
-  amount: string;
-}
+export function betCommand(
+  getApi: () => Promise<ShadowSniperAPI>,
+  logger: Logger,
+): Command {
+  return new Command('bet')
+    .description('Place a bet in the current round')
+    .argument('<amount>', 'Bet amount in tDUST')
+    .action(async (amountStr: string) => {
+      const amount = BigInt(amountStr);
+      const api = await getApi();
+      const state = await api.getState();
 
-export async function betCommand(options: BetOptions): Promise<void> {
-  console.log('💰 Placing bet...\n');
+      if (!state) {
+        console.error('Cannot read contract state');
+        return;
+      }
 
-  const api = new ShadowSniperAPI();
-  api.connect(options.contract);
+      if (state.roundStatus !== RoundStatus.Open) {
+        console.error(`Cannot bet — round status: ${state.roundStatus}`);
+        return;
+      }
 
-  try {
-    const amount = BigInt(options.amount);
+      if (amount < state.config.minBet) {
+        console.error(`Bet too low — minimum is ${state.config.minBet} tDUST`);
+        return;
+      }
 
-    // Get current state
-    const state = await api.getGameState();
+      if (amount > state.config.maxBet) {
+        console.error(`Bet too high — maximum is ${state.config.maxBet} tDUST`);
+        return;
+      }
 
-    if (state.currentRound.state !== 'OPEN') {
-      console.error('❌ Round is not open for bets');
-      process.exit(1);
-    }
+      if (state.playerCount >= 10n) {
+        console.error('Round is full (max 10 players)');
+        return;
+      }
 
-    // Show round info
-    const timeRemaining = state.currentRound.endTime - BigInt(Date.now());
-    console.log(`Round #${state.currentRound.roundNumber}`);
-    console.log(`Current Pot: ${state.currentRound.totalPot} NIGHT`);
-    console.log(`Players: ${state.currentRound.playerCount}`);
-    console.log(`Time Remaining: ${formatDuration(timeRemaining)}\n`);
-
-    console.log(`Your Bet: ${amount} NIGHT`);
-
-    // Validate bet
-    if (amount < state.config.minBet) {
-      console.error(`❌ Bet below minimum of ${state.config.minBet} NIGHT`);
-      process.exit(1);
-    }
-
-    if (amount > state.config.maxBet) {
-      console.error(`❌ Bet above maximum of ${state.config.maxBet} NIGHT`);
-      process.exit(1);
-    }
-
-    // Calculate odds
-    const newPot = state.currentRound.totalPot + amount;
-    const winChance = (Number(amount) / Number(newPot) * 100).toFixed(2);
-    console.log(`Win Chance: ${winChance}%\n`);
-
-    // Place bet
-    const result = await api.placeBet(amount);
-
-    console.log('✅ Bet placed successfully!\n');
-    console.log(`Transaction Hash: ${result.transactionHash}`);
-    console.log(`\n🎰 Good luck! Check round status:`);
-    console.log(`  shadow-sniper status --contract ${options.contract}`);
-  } catch (error) {
-    console.error('❌ Failed to place bet:', error instanceof Error ? error.message : error);
-    process.exit(1);
-  }
+      logger.info({ amount: Number(amount) }, 'Placing bet');
+      const result = await api.placeBet(amount);
+      console.log(`Bet placed: ${amount} tDUST`);
+      console.log(`  TX: ${result.txHash}`);
+    });
 }

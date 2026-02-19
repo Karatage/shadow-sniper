@@ -1,83 +1,67 @@
 /**
- * Type definitions for ShadowSniper API
+ * Game domain types for ShadowSniper.
+ *
+ * @module
  */
 
-export enum RoundState {
-  RESOLVED = 'RESOLVED',
-  OPEN = 'OPEN',
-  RESOLVING = 'RESOLVING'
+/** Round lifecycle states */
+export enum RoundStatus {
+  /** No active round, operator can start one */
+  Resolved = 'resolved',
+  /** Betting is active, players can place bets */
+  Open = 'open',
+  /** Betting closed, waiting for operator to resolve */
+  WaitingToResolve = 'waiting_to_resolve',
+  /** Resolve deadline has passed, round can be cancelled */
+  Expired = 'expired',
 }
 
-export interface RoundConfig {
-  minBet: bigint;
-  maxBet: bigint;
-  roundDuration: bigint;
-  houseFeePercent: bigint;
-  progressivePercent: bigint;
-  progressiveTriggerPercent: bigint;
-  resolveDeadline: bigint;
-}
-
+/** A player's bet in a round */
 export interface Bet {
-  player: string;  // Address
-  amount: bigint;
-  timestamp: bigint;
+  readonly active: boolean;
+  readonly player: Uint8Array;
+  readonly amount: bigint;
 }
 
-export interface Round {
-  roundNumber: bigint;
-  state: RoundState;
-  commitment: Uint8Array;
-  startTime: bigint;
-  endTime: bigint;
-  resolveDeadline: bigint;
-  totalPot: bigint;
-  playerCount: bigint;
+/** Game configuration parameters */
+export interface GameConfig {
+  readonly operator: Uint8Array;
+  readonly minBet: bigint;
+  readonly maxBet: bigint;
+  readonly roundDurationSecs: bigint;
+  readonly houseFeeBps: bigint;
+  readonly progressiveBps: bigint;
+  readonly progressiveTrigger: bigint;
+  readonly resolveDeadlineSecs: bigint;
 }
 
+/** Results from the last completed round */
 export interface RoundResult {
-  roundNumber: bigint;
-  winner: string;  // Address
-  winnerBet: bigint;
-  totalPot: bigint;
-  payout: bigint;
-  houseFee: bigint;
-  progressiveContribution: bigint;
-  progressiveWinner: string | null;  // Address or null
-  progressivePayout: bigint;
-  timestamp: bigint;
+  readonly winner: Uint8Array;
+  readonly payout: bigint;
+  readonly jackpotWinner: Uint8Array;
+  readonly jackpotAmount: bigint;
 }
 
+/** Complete game state derived from on-chain ledger */
 export interface GameState {
-  operator: string;  // Address
-  config: RoundConfig;
-  currentRound: Round;
-  bets: Bet[];
-  progressivePool: bigint;
-  houseBalance: bigint;
-  totalRounds: bigint;
-  lastResult: RoundResult | null;
+  readonly config: GameConfig;
+  readonly roundStatus: RoundStatus;
+  readonly roundNumber: bigint;
+  readonly commitment: Uint8Array;
+  readonly roundEndTime: bigint;
+  readonly roundDeadline: bigint;
+  readonly playerCount: bigint;
+  readonly totalPot: bigint;
+  readonly bets: readonly Bet[];
+  readonly progressivePool: bigint;
+  readonly houseBalance: bigint;
+  readonly lastResult: RoundResult;
+  readonly totalRoundsPlayed: bigint;
 }
 
-export interface DeploymentConfig {
-  operatorAddress: string;
-  minBet?: bigint;
-  maxBet?: bigint;
-  roundDuration?: bigint;
-  houseFeePercent?: bigint;
-  progressivePercent?: bigint;
-  progressiveTriggerPercent?: bigint;
-  resolveDeadline?: bigint;
-}
-
-export interface ContractDeployment {
-  contractAddress: string;
-  transactionHash: string;
-  blockNumber: bigint;
-}
-
-export interface TransactionResult {
-  success: boolean;
-  transactionHash: string;
-  error?: string;
+/** Transaction result from a circuit call */
+export interface TxResult {
+  readonly txHash: string;
+  readonly blockHeight: number;
 }
